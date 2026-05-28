@@ -1,2 +1,2 @@
-all script for https://nexisz.netlify.app/
+all script for https://gamesence.netlify.app/
 needed to store them somewhere skids.

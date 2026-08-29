@@ -1,0 +1,555 @@
+-- ui lib only
+local library = {
+	Renders = {},
+	Connections = {},
+	Folder = "PuppyWare", 
+	Assets = "Assets", 
+	Configs = "Configs" 
+}
+local utility = {}
+local pages = {}
+local sections = {}
+
+do
+	library.__index = library
+	pages.__index = pages
+	sections.__index = sections
+end
+
+-- [[ // Roblox Services // ]] 
+local tws = game:GetService("TweenService")
+local uis = game:GetService("UserInputService")
+local cre = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
+
+-- [[ // Theme Colors // ]] 
+local ACCENT_COLOR = Color3.fromRGB(200, 200, 200)
+local ACCENT_GLOW = Color3.fromRGB(150, 150, 150)
+local BG_DARK = Color3.fromRGB(18, 18, 18)
+local BG_CONTAINER = Color3.fromRGB(28, 28, 28)
+local BG_ELEMENT = Color3.fromRGB(38, 38, 38)
+local BG_HOVER = Color3.fromRGB(50, 50, 50)
+local TEXT_BRIGHT = Color3.fromRGB(240, 240, 240)
+local TEXT_MUTED = Color3.fromRGB(140, 140, 140)
+local BORDER_COLOR = Color3.fromRGB(55, 55, 55)
+local SWITCH_OFF = Color3.fromRGB(45, 45, 45)
+local SWITCH_ON = Color3.fromRGB(180, 180, 180)
+
+-- [[ // Sound Effects // ]] 
+local function playSound(soundId, volume)
+	volume = volume or 0.5
+	pcall(function()
+		local sound = Instance.new("Sound")
+		sound.SoundId = soundId
+		sound.Volume = volume
+		sound.Parent = SoundService
+		sound:Play()
+		task.delay(sound.TimeLength + 0.1, function()
+			pcall(function() sound:Destroy() end)
+		end)
+	end)
+end
+
+local SOUNDS = {
+	TOGGLE_ON = "rbxassetid://9120389595",
+	TOGGLE_OFF = "rbxassetid://9120388175",
+	NOTIFY = "rbxassetid://9120393191",
+	SAVE = "rbxassetid://9120395813",
+	UNLOAD = "rbxassetid://9120397245",
+	CLICK = "rbxassetid://9120389595",
+}
+
+-- [[ // Utility Functions // ]] 
+function utility:RenderObject(RenderType, RenderProperties)
+	local Render = Instance.new(RenderType)
+	if RenderProperties and typeof(RenderProperties) == "table" then
+		for Property, Value in pairs(RenderProperties) do
+			Render[Property] = Value
+		end
+	end
+	library.Renders[#library.Renders + 1] = Render
+	return Render
+end
+
+function utility:CreateConnection(ConnectionType, ConnectionCallback)
+	local Connection = ConnectionType:Connect(ConnectionCallback)
+	library.Connections[#library.Connections + 1] = Connection
+	return Connection
+end
+
+-- [[ // Smooth Dragging // ]] 
+local function makeSmoothDrag(frame, dragSpeed)
+	dragSpeed = dragSpeed or 0.15
+	local dragging = false
+	local dragInput, startPos, dragStart
+	utility:CreateConnection(frame.InputBegan, function(input)
+		if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+			utility:CreateConnection(input.Changed, function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+	utility:CreateConnection(frame.InputChanged, function(input)
+		if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			dragInput = input
+		end
+	end)
+	utility:CreateConnection(RunService.RenderStepped, function()
+		if dragging and dragInput then
+			local delta = dragInput.Position - dragStart
+			local targetPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			frame.Position = frame.Position:Lerp(targetPos, dragSpeed)
+		end
+	end)
+end
+
+-- [[ // Glow Effect // ]] 
+local function createGlow(parent, color, transparency, size)
+	color = color or ACCENT_GLOW
+	transparency = transparency or 0.5
+	size = size or 1.5
+	
+	local glow = Instance.new("ImageLabel")
+	glow.BackgroundTransparency = 1
+	glow.Image = "rbxassetid://2151741365"
+	glow.ImageColor3 = color
+	glow.ImageTransparency = transparency
+	glow.Size = UDim2.new(size, 0, size, 0)
+	glow.Position = UDim2.new(0.5, 0, 0.5, 0)
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Parent = parent
+	glow.ScaleType = Enum.ScaleType.Fit
+	return glow
+}
+
+-- [[ // Notification System // ]] 
+local notifGui = utility:RenderObject("ScreenGui", { DisplayOrder = 10000, Enabled = true, IgnoreGuiInset = true, Parent = cre, ResetOnSpawn = false })
+local notifContainer = utility:RenderObject("Frame", { BackgroundTransparency = 1, Parent = notifGui, Position = UDim2.new(1, -290, 0, 20), Size = UDim2.new(0, 270, 1, -40) })
+utility:RenderObject("UIListLayout", { Padding = UDim.new(0, 8), Parent = notifContainer, HorizontalAlignment = "Right", VerticalAlignment = "Top" })
+
+function utility:Notify(title, msg, duration)
+	duration = duration or 3.5
+	playSound(SOUNDS.NOTIFY, 0.3)
+	
+	local card = utility:RenderObject("Frame", { BackgroundColor3 = BG_CONTAINER, Parent = notifContainer, Size = UDim2.new(1, 0, 0, 52), Position = UDim2.new(1, 320, 0, 0) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 8), Parent = card })
+	utility:RenderObject("UIStroke", { Color = ACCENT_COLOR, Transparency = 0.6, Thickness = 1, Parent = card })
+	
+	createGlow(card, ACCENT_GLOW, 0.3, 2)
+	
+	local cardTitle = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = card, Position = UDim2.new(0, 12, 0, 6), Size = UDim2.new(1, -24, 0, 18), Font = "GothamBold", Text = title, TextColor3 = ACCENT_COLOR, TextSize = 13, TextXAlignment = "Left" })
+	local cardMsg = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = card, Position = UDim2.new(0, 12, 0, 26), Size = UDim2.new(1, -24, 0, 20), Font = "Gotham", Text = msg, TextColor3 = TEXT_MUTED, TextSize = 11, TextXAlignment = "Left", TextWrapped = true })
+	
+	tws:Create(card, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Position = UDim2.new(0, 0, 0, 0) }):Play()
+	
+	task.delay(duration, function()
+		if card and card.Parent then
+			local tween = tws:Create(card, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.In), { Position = UDim2.new(1, 320, 0, 0) })
+			tween:Play()
+			tween.Completed:Connect(function() card:Destroy() end)
+		end
+	end)
+end
+
+-- [[ // Color Picker // ]] 
+local function createColorPicker(callback, currentColor)
+	local colorGui = utility:RenderObject("ScreenGui", { DisplayOrder = 99999, Enabled = true, IgnoreGuiInset = true, Parent = cre, ResetOnSpawn = false })
+	local mainFrame = utility:RenderObject("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = BG_CONTAINER, Parent = colorGui, Position = UDim2.new(0.5, 0, 0.5, 0), Size = UDim2.new(0, 300, 0, 280) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 12), Parent = mainFrame })
+	utility:RenderObject("UIStroke", { Color = BORDER_COLOR, Thickness = 1.5, Parent = mainFrame })
+	
+	local title = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = mainFrame, Position = UDim2.new(0, 0, 0, 10), Size = UDim2.new(1, 0, 0, 30), Font = "GothamBold", Text = "Color Picker", TextColor3 = TEXT_BRIGHT, TextSize = 16 })
+	
+	local colorDisplay = utility:RenderObject("Frame", { Parent = mainFrame, Position = UDim2.new(0.5, -75, 0, 50), Size = UDim2.new(0, 150, 0, 60) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 8), Parent = colorDisplay })
+	utility:RenderObject("UIStroke", { Color = BORDER_COLOR, Thickness = 1, Parent = colorDisplay })
+	
+	local currentR, currentG, currentB = currentColor[1] or 255, currentColor[2] or 255, currentColor[3] or 255
+	
+	local function updateDisplay()
+		colorDisplay.BackgroundColor3 = Color3.fromRGB(currentR, currentG, currentB)
+	end
+	updateDisplay()
+	
+	local function createSlider(label, yPos, getVal, setVal, color)
+		local lbl = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = mainFrame, Position = UDim2.new(0, 20, 0, yPos), Size = UDim2.new(0, 30, 0, 20), Font = "GothamBold", Text = label, TextColor3 = color, TextSize = 14, TextXAlignment = "Left" })
+		local track = utility:RenderObject("Frame", { BackgroundColor3 = Color3.fromRGB(200, 210, 220), Parent = mainFrame, Position = UDim2.new(0, 55, 0, yPos + 4), Size = UDim2.new(0, 180, 0, 12) })
+		utility:RenderObject("UICorner", { CornerRadius = UDim.new(1, 0), Parent = track })
+		local bar = utility:RenderObject("Frame", { BackgroundColor3 = color, Parent = track, Size = UDim2.new(getVal() / 255, 0, 1, 0) })
+		utility:RenderObject("UICorner", { CornerRadius = UDim.new(1, 0), Parent = bar })
+		
+		local valLabel = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = mainFrame, Position = UDim2.new(0, 240, 0, yPos), Size = UDim2.new(0, 40, 0, 20), Font = "GothamBold", Text = tostring(getVal()), TextColor3 = color, TextSize = 12 })
+		
+		local btn = utility:RenderObject("TextButton", { BackgroundTransparency = 1, Parent = track, Size = UDim2.new(1, 0, 1, 0), Text = "" })
+		
+		local function updateFromInput(input)
+			local percentage = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+			local val = math.floor(percentage * 255)
+			setVal(val)
+			bar.Size = UDim2.new(val / 255, 0, 1, 0)
+			valLabel.Text = tostring(val)
+			updateDisplay()
+			callback(Color3.fromRGB(currentR, currentG, currentB))
+		end
+		
+		local holding = false
+		utility:CreateConnection(btn.InputBegan, function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+				holding = true
+				updateFromInput(input)
+			end
+		end)
+		utility:CreateConnection(uis.InputChanged, function(input)
+			if holding and input.UserInputType == Enum.UserInputType.MouseMovement then
+				updateFromInput(input)
+			end
+		end)
+		utility:CreateConnection(uis.InputEnded, function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 then holding = false end
+		end)
+	end
+	
+	createSlider("R", 125, function() return currentR end, function(v) currentR = v end, Color3.fromRGB(255, 50, 50))
+	createSlider("G", 165, function() return currentG end, function(v) currentG = v end, Color3.fromRGB(50, 255, 50))
+	createSlider("B", 205, function() return currentB end, function(v) currentB = v end, Color3.fromRGB(50, 50, 255))
+	
+	local confirmBtn = utility:RenderObject("TextButton", { BackgroundColor3 = ACCENT_COLOR, Parent = mainFrame, Position = UDim2.new(0.5, -60, 0, 245), Size = UDim2.new(0, 120, 0, 25), Font = "GothamBold", Text = "Apply", TextColor3 = Color3.fromRGB(255, 255, 255), TextSize = 14, AutoButtonColor = false })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 6), Parent = confirmBtn })
+	
+	utility:CreateConnection(confirmBtn.MouseButton1Click, function()
+		playSound(SOUNDS.CLICK, 0.3)
+		callback(Color3.fromRGB(currentR, currentG, currentB))
+		colorGui:Destroy()
+	end)
+	
+	makeSmoothDrag(mainFrame, 0.12)
+	return colorGui
+end
+
+-- [[ // Main Window Constructor // ]] 
+function library:CreateWindow(Properties)
+	Properties = Properties or {}
+	local Window = { Pages = {}, Accent = ACCENT_COLOR, Enabled = true, Key = Enum.KeyCode.Delete }
+	do
+		local ScreenGui = utility:RenderObject("ScreenGui", { DisplayOrder = 9999, Enabled = true, IgnoreGuiInset = true, Parent = cre, ResetOnSpawn = false, ZIndexBehavior = "Global" })
+		
+		local MainFrame = utility:RenderObject("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = BG_DARK, Parent = ScreenGui, Position = UDim2.new(0.5, 0, 0.5, 0), Size = UDim2.new(0, 720, 0, 520) })
+		utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 16), Parent = MainFrame })
+		utility:RenderObject("UIStroke", { Color = BORDER_COLOR, Thickness = 1.5, Parent = MainFrame })
+		
+		local Header = utility:RenderObject("Frame", { BackgroundTransparency = 1, Parent = MainFrame, Position = UDim2.new(0, 0, 0, 0), Size = UDim2.new(1, 0, 0, 50) })
+		local HeaderTitle = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = Header, Position = UDim2.new(0, 20, 0, 0), Size = UDim2.new(0, 300, 1, 0), Font = "GothamBold", RichText = true, TextColor3 = TEXT_BRIGHT, TextSize = 22, TextXAlignment = "Left", Text = 'PUPPYWARE <font color="#B13939">UI</font>' })
+
+		local NavPanel = utility:RenderObject("Frame", { BackgroundColor3 = BG_CONTAINER, Parent = MainFrame, Position = UDim2.new(0, 12, 0, 55), Size = UDim2.new(0, 75, 1, -65) })
+		utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 12), Parent = NavPanel })
+		utility:RenderObject("UIStroke", { Color = BORDER_COLOR, Thickness = 1, Parent = NavPanel })
+		local NavList = utility:RenderObject("UIListLayout", { Padding = UDim.new(0, 10), Parent = NavPanel, HorizontalAlignment = "Center", VerticalAlignment = "Top" })
+		utility:RenderObject("UIPadding", { Parent = NavPanel, PaddingTop = UDim.new(0, 12) })
+		
+		local ContentFolder = utility:RenderObject("Folder", { Parent = MainFrame })
+		makeSmoothDrag(MainFrame, 0.12)
+
+		function Window:SetPage(Page)
+			for _, page in pairs(Window.Pages) do if page.Open and page ~= Page then page:Set(false) end end
+		end
+		
+		function Window:Fade(state)
+			MainFrame.Visible = state
+		end
+		
+		function Window:Unload()
+			playSound(SOUNDS.UNLOAD, 0.5)
+			saveConfig()
+			task.wait(0.2)
+			for _, conn in pairs(library.Connections) do pcall(function() conn:Disconnect() end) end
+			ScreenGui:Destroy()
+			notifGui:Destroy()
+		end
+		
+		Window["TabsHolder"] = NavPanel
+		Window["PagesHolder"] = ContentFolder
+		
+		utility:CreateConnection(uis.InputBegan, function(Input)
+			if Input.KeyCode == Window.Key then
+				Window.Enabled = not Window.Enabled
+				Window:Fade(Window.Enabled)
+			end
+		end)
+	end
+	return setmetatable(Window, library)
+end
+
+-- [[ // Page Constructor // ]] 
+function library:CreatePage(Properties)
+	Properties = Properties or {}
+	local Page = { Image = Properties.Image or "rbxassetid://6023426915", Open = false, Window = self }
+	do
+		local TabBtn = utility:RenderObject("Frame", { BackgroundColor3 = BG_ELEMENT, Parent = Page.Window["TabsHolder"], Size = UDim2.new(0, 50, 0, 50) })
+		utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 10), Parent = TabBtn })
+		utility:RenderObject("UIStroke", { Color = BORDER_COLOR, Thickness = 1, Parent = TabBtn })
+		
+		createGlow(TabBtn, ACCENT_GLOW, 0.2, 1.5)
+		
+		local TabIcon = utility:RenderObject("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Parent = TabBtn, Position = UDim2.new(0.5, 0, 0.5, 0), Size = UDim2.new(0, 24, 0, 24), Image = Page.Image, ImageColor3 = TEXT_MUTED })
+		local HitArea = utility:RenderObject("TextButton", { BackgroundTransparency = 1, Parent = TabBtn, Size = UDim2.new(1, 0, 1, 0), Text = "" })
+		
+		utility:CreateConnection(HitArea.MouseEnter, function()
+			tws:Create(TabBtn, TweenInfo.new(0.2), { BackgroundColor3 = BG_HOVER }):Play()
+		end)
+		utility:CreateConnection(HitArea.MouseLeave, function()
+			if not Page.Open then
+				tws:Create(TabBtn, TweenInfo.new(0.2), { BackgroundColor3 = BG_ELEMENT }):Play()
+			end
+		end)
+		
+		local PageFrame = utility:RenderObject("Frame", { BackgroundTransparency = 1, Parent = Page.Window["PagesHolder"], Position = UDim2.new(0, 100, 0, 55), Size = UDim2.new(1, -112, 1, -65), Visible = false })
+		local LeftColumn = utility:RenderObject("Frame", { BackgroundTransparency = 1, Parent = PageFrame, Size = UDim2.new(0.5, -6, 1, 0) })
+		local RightColumn = utility:RenderObject("Frame", { BackgroundTransparency = 1, Parent = PageFrame, Position = UDim2.new(0.5, 6, 0, 0), Size = UDim2.new(0.5, -6, 1, 0) })
+		utility:RenderObject("UIListLayout", { Padding = UDim.new(0, 10), Parent = LeftColumn })
+		utility:RenderObject("UIListLayout", { Padding = UDim.new(0, 10), Parent = RightColumn })
+		Page["Page"] = PageFrame
+		Page["Left"] = LeftColumn
+		Page["Right"] = RightColumn
+
+		function Page:Set(state)
+			Page.Open = state
+			PageFrame.Visible = state
+			tws:Create(TabBtn, TweenInfo.new(0.3, Enum.EasingStyle.Quart), { BackgroundColor3 = state and ACCENT_COLOR or BG_ELEMENT }):Play()
+			tws:Create(TabIcon, TweenInfo.new(0.3), { ImageColor3 = state and TEXT_BRIGHT or TEXT_MUTED }):Play()
+			if state then Page.Window:SetPage(Page) end
+		end
+
+		utility:CreateConnection(HitArea.MouseButton1Click, function() 
+			playSound(SOUNDS.CLICK, 0.2)
+			if not Page.Open then Page:Set(true) end
+		end)
+	end
+	if #Page.Window.Pages == 0 then Page:Set(true) end
+	Page.Window.Pages[#Page.Window.Pages + 1] = Page
+	return setmetatable(Page, pages)
+end
+
+-- [[ // Section Constructor // ]] 
+function pages:CreateSection(Properties)
+	Properties = Properties or {}
+	local Section = { Name = Properties.Name or "Section", Side = Properties.Side or "Left", Page = self }
+	local Container = utility:RenderObject("Frame", { BackgroundColor3 = BG_CONTAINER, Parent = Section.Page[Section.Side], Size = UDim2.new(1, 0, 0, Properties.Size or 180) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 10), Parent = Container })
+	utility:RenderObject("UIStroke", { Color = BORDER_COLOR, Thickness = 1, Parent = Container })
+	
+	local Title = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = Container, Position = UDim2.new(0, 14, 0, 10), Size = UDim2.new(1, -28, 0, 20), Font = "GothamBold", Text = Section.Name:upper(), TextColor3 = ACCENT_COLOR, TextSize = 12, TextXAlignment = "Left" })
+	local Scroll = utility:RenderObject("ScrollingFrame", { BackgroundTransparency = 1, Parent = Container, Position = UDim2.new(0, 12, 0, 34), Size = UDim2.new(1, -24, 1, -44), CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = "Y", ScrollBarThickness = 3, ScrollBarImageColor3 = ACCENT_COLOR })
+	utility:RenderObject("UIListLayout", { Padding = UDim.new(0, 6), Parent = Scroll })
+	Section["Holder"] = Scroll
+	return setmetatable(Section, sections)
+end
+
+-- [[ // Toggle Component // ]] 
+function sections:CreateToggle(Properties)
+	Properties = Properties or {}
+	local Content = { Name = Properties.Name or "Toggle", State = Properties.State or false, Callback = Properties.Callback or function() end, Section = self }
+	local Row = utility:RenderObject("Frame", { BackgroundColor3 = BG_ELEMENT, Parent = Content.Section.Holder, Size = UDim2.new(1, 0, 0, 30) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 8), Parent = Row })
+	
+	local Switch = utility:RenderObject("Frame", { BackgroundColor3 = SWITCH_OFF, Parent = Row, Position = UDim2.new(1, -38, 0.5, -8), Size = UDim2.new(0, 28, 0, 16) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(1, 0), Parent = Switch })
+	local Knob = utility:RenderObject("Frame", { BackgroundColor3 = Color3.fromRGB(255, 255, 255), Parent = Switch, Position = UDim2.new(0, 2, 0.5, -6), Size = UDim2.new(0, 12, 0, 12) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(1, 0), Parent = Knob })
+	local Label = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = Row, Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -60, 1, 0), Font = "Gotham", Text = Content.Name, TextColor3 = TEXT_BRIGHT, TextSize = 14, TextXAlignment = "Left" })
+	local Btn = utility:RenderObject("TextButton", { BackgroundTransparency = 1, Parent = Row, Size = UDim2.new(1, 0, 1, 0), Text = "" })
+	
+	Content["Row"] = Row
+
+	function Content:Set(state)
+		Content.State = state
+		tws:Create(Switch, TweenInfo.new(0.25, Enum.EasingStyle.Quart), { BackgroundColor3 = state and SWITCH_ON or SWITCH_OFF }):Play()
+		tws:Create(Knob, TweenInfo.new(0.25, Enum.EasingStyle.Quart), { Position = state and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6) }):Play()
+		if state then
+			playSound(SOUNDS.TOGGLE_ON, 0.3)
+		else
+			playSound(SOUNDS.TOGGLE_OFF, 0.3)
+		end
+		Content.Callback(state)
+	end
+
+	utility:CreateConnection(Btn.MouseButton1Click, function() 
+		playSound(SOUNDS.CLICK, 0.15)
+		Content:Set(not Content.State) 
+	end)
+	
+	utility:CreateConnection(Btn.MouseEnter, function()
+		tws:Create(Row, TweenInfo.new(0.15), { BackgroundColor3 = BG_HOVER }):Play()
+	end)
+	utility:CreateConnection(Btn.MouseLeave, function()
+		tws:Create(Row, TweenInfo.new(0.15), { BackgroundColor3 = BG_ELEMENT }):Play()
+	end)
+	
+	Content:Set(Content.State)
+	return Content
+end
+
+-- [[ // Slider Component // ]] 
+function sections:CreateSlider(Properties)
+	Properties = Properties or {}
+	local Slider = { Name = Properties.Name or "Slider", Min = Properties.Min or 0, Max = Properties.Max or 100, State = Properties.State or 50, Callback = Properties.Callback or function() end, Section = self }
+	local Container = utility:RenderObject("Frame", { BackgroundColor3 = BG_ELEMENT, Parent = Slider.Section.Holder, Size = UDim2.new(1, 0, 0, 40) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 8), Parent = Container })
+	
+	local Label = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = Container, Position = UDim2.new(0, 12, 0, 2), Size = UDim2.new(1, -24, 0, 18), Font = "Gotham", Text = Slider.Name .. ": " .. Slider.State, TextColor3 = TEXT_BRIGHT, TextSize = 14, TextXAlignment = "Left" })
+	local Track = utility:RenderObject("Frame", { BackgroundColor3 = Color3.fromRGB(180, 200, 220), Parent = Container, Position = UDim2.new(0, 12, 0, 26), Size = UDim2.new(1, -24, 0, 6) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(1, 0), Parent = Track })
+	local Bar = utility:RenderObject("Frame", { BackgroundColor3 = ACCENT_COLOR, Parent = Track, Size = UDim2.new(0, 0, 1, 0) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(1, 0), Parent = Bar })
+	local Btn = utility:RenderObject("TextButton", { BackgroundTransparency = 1, Parent = Track, Size = UDim2.new(1, 0, 1, 0), Text = "" })
+
+	function Slider:UpdateValue(val)
+		local percentage = math.clamp((val - Slider.Min) / (Slider.Max - Slider.Min), 0, 1)
+		Bar.Size = UDim2.new(percentage, 0, 1, 0)
+		Label.Text = Slider.Name .. ": " .. val
+		Slider.State = val
+		Slider.Callback(val)
+	end
+
+	local function updateFromInput(input)
+		local percentage = math.clamp((input.Position.X - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+		local val = math.floor(Slider.Min + (Slider.Max - Slider.Min) * percentage)
+		Slider:UpdateValue(val)
+	end
+
+	local holding = false
+	utility:CreateConnection(Btn.InputBegan, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then 
+			holding = true
+			updateFromInput(input) 
+		end
+	end)
+	utility:CreateConnection(uis.InputChanged, function(input)
+		if holding and input.UserInputType == Enum.UserInputType.MouseMovement then updateFromInput(input) end
+	end)
+	utility:CreateConnection(uis.InputEnded, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then holding = false end
+	end)
+
+	Slider:UpdateValue(Slider.State)
+	Slider["Frame"] = Container
+	return Slider
+end
+
+-- [[ // Dropdown Component // ]] 
+function sections:CreateDropdown(Properties)
+	Properties = Properties or {}
+	local Dropdown = { Name = Properties.Name or "Dropdown", Options = Properties.Options or {}, State = Properties.State or 1, Callback = Properties.Callback or function() end, Section = self }
+	local Container = utility:RenderObject("Frame", { BackgroundColor3 = BG_ELEMENT, Parent = Dropdown.Section.Holder, Size = UDim2.new(1, 0, 0, 40) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 8), Parent = Container })
+	
+	local Label = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = Container, Position = UDim2.new(0, 12, 0, 2), Size = UDim2.new(1, -24, 0, 18), Font = "Gotham", Text = Dropdown.Name .. ": " .. Dropdown.Options[Dropdown.State], TextColor3 = TEXT_BRIGHT, TextSize = 14, TextXAlignment = "Left" })
+	local Btn = utility:RenderObject("TextButton", { BackgroundColor3 = Color3.fromRGB(180, 200, 220), Parent = Container, Position = UDim2.new(0, 12, 0, 22), Size = UDim2.new(1, -24, 0, 14), Font = "GothamBold", Text = "▼", TextColor3 = TEXT_BRIGHT, TextSize = 12, AutoButtonColor = false })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Btn })
+
+	local isOpen = false
+	local DropdownFrame = utility:RenderObject("Frame", { BackgroundColor3 = BG_CONTAINER, Parent = Container, Position = UDim2.new(0, 12, 0, 22), Size = UDim2.new(1, -24, 0, 0), Visible = false })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 6), Parent = DropdownFrame })
+	utility:RenderObject("UIStroke", { Color = BORDER_COLOR, Thickness = 1, Parent = DropdownFrame })
+	local DropdownList = utility:RenderObject("UIListLayout", { Padding = UDim.new(0, 2), Parent = DropdownFrame })
+
+	function Dropdown:Set(index)
+		Dropdown.State = index
+		Label.Text = Dropdown.Name .. ": " .. Dropdown.Options[index]
+		Dropdown.Callback(index)
+	end
+
+	for i, option in ipairs(Dropdown.Options) do
+		local optBtn = utility:RenderObject("TextButton", { BackgroundColor3 = BG_ELEMENT, Parent = DropdownFrame, Size = UDim2.new(1, 0, 0, 24), Font = "Gotham", Text = option, TextColor3 = TEXT_BRIGHT, TextSize = 13, AutoButtonColor = false })
+		utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 4), Parent = optBtn })
+		
+		utility:CreateConnection(optBtn.MouseEnter, function()
+			tws:Create(optBtn, TweenInfo.new(0.15), { BackgroundColor3 = BG_HOVER }):Play()
+		end)
+		utility:CreateConnection(optBtn.MouseLeave, function()
+			tws:Create(optBtn, TweenInfo.new(0.15), { BackgroundColor3 = BG_ELEMENT }):Play()
+		end)
+		
+		utility:CreateConnection(optBtn.MouseButton1Click, function()
+			playSound(SOUNDS.CLICK, 0.15)
+			Dropdown:Set(i)
+			isOpen = false
+			DropdownFrame.Visible = false
+			DropdownFrame.Size = UDim2.new(1, -24, 0, 0)
+			Btn.Text = "▼"
+		end)
+	end
+
+	utility:CreateConnection(Btn.MouseButton1Click, function()
+		playSound(SOUNDS.CLICK, 0.15)
+		isOpen = not isOpen
+		DropdownFrame.Visible = isOpen
+		if isOpen then
+			local count = #Dropdown.Options
+			DropdownFrame.Size = UDim2.new(1, -24, 0, count * 26 + 4)
+			Btn.Text = "▲"
+		else
+			DropdownFrame.Size = UDim2.new(1, -24, 0, 0)
+			Btn.Text = "▼"
+		end
+	end)
+
+	Dropdown:Set(Dropdown.State)
+	return Dropdown
+end
+
+-- [[ // Label Component // ]] 
+function sections:CreateLabel(Properties)
+	Properties = Properties or {}
+	local Label = { Name = Properties.Name or "Label", Section = self }
+	local Row = utility:RenderObject("Frame", { BackgroundColor3 = BG_ELEMENT, Parent = Label.Section.Holder, Size = UDim2.new(1, 0, 0, 30) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 8), Parent = Row })
+	
+	local Text = utility:RenderObject("TextLabel", { BackgroundTransparency = 1, Parent = Row, Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -24, 1, 0), Font = "Gotham", Text = Label.Name, TextColor3 = TEXT_MUTED, TextSize = 13, TextXAlignment = "Left" })
+	
+	function Label:Set(newText)
+		Text.Text = newText
+	end
+	
+	return Label
+end
+
+-- [[ // Button Component // ]] 
+function sections:CreateButton(Properties)
+	Properties = Properties or {}
+	local Button = { Name = Properties.Name or "Button", Callback = Properties.Callback or function() end, Section = self }
+	local Row = utility:RenderObject("Frame", { BackgroundColor3 = BG_ELEMENT, Parent = Button.Section.Holder, Size = UDim2.new(1, 0, 0, 30) })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 8), Parent = Row })
+	
+	local Btn = utility:RenderObject("TextButton", { BackgroundColor3 = Color3.fromRGB(180, 200, 220), Parent = Row, Position = UDim2.new(0.5, -60, 0, 4), Size = UDim2.new(0, 120, 0, 22), Font = "GothamBold", Text = Button.Name, TextColor3 = TEXT_BRIGHT, TextSize = 13, AutoButtonColor = false })
+	utility:RenderObject("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Btn })
+	
+	utility:CreateConnection(Btn.MouseEnter, function()
+		tws:Create(Btn, TweenInfo.new(0.15), { BackgroundColor3 = ACCENT_COLOR }):Play()
+	end)
+	utility:CreateConnection(Btn.MouseLeave, function()
+		tws:Create(Btn, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(180, 200, 220) }):Play()
+	end)
+	
+	utility:CreateConnection(Btn.MouseButton1Click, function()
+		playSound(SOUNDS.CLICK, 0.2)
+		Button.Callback()
+	end)
+	
+	return Button
+end
+
+-- [[ // Export // ]] 
+return library
